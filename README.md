@@ -106,11 +106,11 @@ done
 ## Filename Handling
 
 Bookmark titles are sanitized for use as filenames:
-- Unsafe characters (`/\:*?"<>|`) are replaced with underscores
+- Spaces and unsafe characters (`/\:*?"<>|`) are replaced with hyphens
 - Unicode is normalized
-- Whitespace is collapsed
 - Long names are truncated at word boundaries (max 200 chars)
-- Duplicate names get a counter: `title.pdf`, `title (1).pdf`, etc.
+- Duplicate names get a counter: `Title.pdf`, `Title-1.pdf`, `Title-2.pdf`
+- With `--no-clobber`: case number prefix uses underscore: `12345678_Bench-Memo.pdf`
 
 ## Requirements
 
