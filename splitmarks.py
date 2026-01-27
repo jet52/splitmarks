@@ -23,6 +23,17 @@ class Bookmark:
     children: list["Bookmark"] = field(default_factory=list)
 
 
+def extract_case_number(text: str) -> str | None:
+    """Extract an 8-digit case number from text."""
+    match = re.search(r"(?<!\d)(\d{8})(?!\d)", text)
+    return match.group(1) if match else None
+
+
+def contains_case_number(text: str) -> bool:
+    """Check if text contains an 8-digit number."""
+    return bool(re.search(r"(?<!\d)\d{8}(?!\d)", text))
+
+
 def sanitize_filename(title: str, max_length: int = 200) -> str:
     """
     Sanitize a bookmark title for use as a filename.
@@ -193,6 +204,7 @@ def split_pdf(
     verbose: int = 0,
     dry_run: bool = False,
     match: str | None = None,
+    add_case_number: bool = False,
 ) -> int:
     """
     Split a PDF at top-level bookmarks into separate files.
@@ -200,6 +212,8 @@ def split_pdf(
     Args:
         verbose: Verbosity level (0=quiet, 1=progress, 2=include bookmark tree).
         match: If provided, only extract bookmarks containing this string (case-insensitive).
+        add_case_number: If True, prepend 8-digit case number from input filename to
+            output files that don't already contain one.
 
     Returns the number of files created (or would be created in dry-run mode).
     """
@@ -248,6 +262,18 @@ def split_pdf(
     if not dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Extract case number from input filename if needed
+    input_case_number = None
+    if add_case_number:
+        input_case_number = extract_case_number(input_path.name)
+        if not input_case_number:
+            print(
+                f"Warning: No 8-digit case number found in '{input_path.name}'",
+                file=sys.stderr,
+            )
+        elif verbose >= 1:
+            print(f"Using case number {input_case_number} from input filename")
+
     # Track used filenames to handle duplicates
     used_names: set[str] = set()
     files_created = 0
@@ -258,6 +284,10 @@ def split_pdf(
     for title, start_page, end_page in ranges:
         # Generate safe filename
         safe_name = sanitize_filename(title)
+
+        # Prepend case number if requested and not already present
+        if input_case_number and not contains_case_number(safe_name):
+            safe_name = f"{input_case_number} {safe_name}"
         output_path = get_unique_filename(output_dir, safe_name, used_names)
 
         page_count = end_page - start_page + 1
@@ -341,6 +371,11 @@ def main() -> None:
         type=str,
         help="Only extract bookmarks containing this string (case-insensitive)",
     )
+    parser.add_argument(
+        "--add-case-number",
+        action="store_true",
+        help="Prepend 8-digit case number from input filename to outputs lacking one",
+    )
 
     args = parser.parse_args()
 
@@ -360,6 +395,7 @@ def main() -> None:
         verbose=args.verbose,
         dry_run=args.dry_run,
         match=args.match,
+        add_case_number=args.add_case_number,
     )
 
     # Summary
