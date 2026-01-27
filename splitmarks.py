@@ -38,48 +38,48 @@ def sanitize_filename(title: str, max_length: int = 200) -> str:
     """
     Sanitize a bookmark title for use as a filename.
 
-    - Replaces unsafe characters with underscores
+    - Replaces unsafe characters with hyphens
     - Normalizes unicode
-    - Collapses whitespace
+    - Collapses whitespace to hyphens
     - Truncates at word boundary
     """
     # Normalize unicode to composed form
     title = unicodedata.normalize("NFC", title)
 
-    # Replace unsafe filesystem characters
+    # Replace unsafe filesystem characters with hyphens
     unsafe_chars = r'/\:*?"<>|'
     for char in unsafe_chars:
-        title = title.replace(char, "_")
+        title = title.replace(char, "-")
 
-    # Collapse multiple whitespace/underscores into single space
-    title = re.sub(r"[\s_]+", " ", title)
-    title = title.strip()
+    # Collapse multiple whitespace/underscores/hyphens into single hyphen
+    title = re.sub(r"[\s_-]+", "-", title)
+    title = title.strip("-")
 
     # Truncate at word boundary if too long
     if len(title) > max_length:
         truncated = title[:max_length]
-        # Find last space to avoid cutting words
-        last_space = truncated.rfind(" ")
-        if last_space > max_length // 2:
-            title = truncated[:last_space]
+        # Find last hyphen to avoid cutting words
+        last_hyphen = truncated.rfind("-")
+        if last_hyphen > max_length // 2:
+            title = truncated[:last_hyphen]
         else:
             title = truncated
 
-    return title.strip() or "untitled"
+    return title.strip("-") or "untitled"
 
 
 def get_unique_filename(output_dir: Path, base_name: str, used_names: set) -> Path:
     """
     Generate a unique filename, adding counter for duplicates.
 
-    Returns paths like: title.pdf, title (1).pdf, title (2).pdf
+    Returns paths like: title.pdf, title-1.pdf, title-2.pdf
     """
     candidate = base_name
     counter = 0
 
     while candidate.lower() in used_names:
         counter += 1
-        candidate = f"{base_name} ({counter})"
+        candidate = f"{base_name}-{counter}"
 
     used_names.add(candidate.lower())
     return output_dir / f"{candidate}.pdf"
@@ -289,13 +289,13 @@ def split_pdf(
         if no_clobber and not contains_case_number(safe_name):
             if base_case_number:
                 # Use case number from input filename
-                candidate_name = f"{base_case_number} {safe_name}"
+                candidate_name = f"{base_case_number}_{safe_name}"
                 output_path = get_unique_filename(output_dir, candidate_name, used_names)
             else:
                 # No case number in input, find an unused number
                 case_num = 0
                 while True:
-                    candidate_name = f"{case_num:08d} {safe_name}"
+                    candidate_name = f"{case_num:08d}_{safe_name}"
                     output_path = output_dir / f"{candidate_name}.pdf"
                     if not output_path.exists() and candidate_name.lower() not in used_names:
                         used_names.add(candidate_name.lower())
