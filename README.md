@@ -34,7 +34,7 @@ pip install -e .
 ## Usage
 
 ```
-splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--add-case-number]
+splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--no-clobber]
 ```
 
 ### Arguments
@@ -47,7 +47,7 @@ splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--add-case
 | `-v` | Show progress (page counts, bookmark counts) |
 | `-vv` | Also show nested bookmark tree for each output file |
 | `--dry-run` | Preview splits without creating files |
-| `--add-case-number` | Prepend 8-digit case number from input filename to outputs lacking one |
+| `--no-clobber` | Avoid collisions: prepend case number from filename, or auto-increment from 00000000 |
 
 ### Examples
 
@@ -87,11 +87,11 @@ Preview with full bookmark tree:
 splitmarks document.pdf --dry-run -vv
 ```
 
-Batch extract memos from multiple PDFs, using case numbers from filenames to avoid collisions:
+Batch extract memos from multiple PDFs, avoiding filename collisions:
 
 ```bash
 for f in ./packets/*.pdf; do
-  splitmarks "$f" --match Memo --add-case-number -o ./memos
+  splitmarks "$f" --match Memo --no-clobber -o ./memos
 done
 ```
 
