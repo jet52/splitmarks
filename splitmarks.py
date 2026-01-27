@@ -123,6 +123,14 @@ def get_top_level_bookmarks(bookmarks: list[Bookmark]) -> list[tuple[str, int]]:
     return result
 
 
+def print_bookmark_tree(bookmark: Bookmark, indent: int = 0) -> None:
+    """Print a bookmark and its children with indentation."""
+    prefix = "  " * indent + ("- " if indent > 0 else "")
+    print(f"    {prefix}{bookmark.title}")
+    for child in bookmark.children:
+        print_bookmark_tree(child, indent + 1)
+
+
 def add_bookmarks_to_writer(
     writer: PdfWriter,
     bookmark: Bookmark,
@@ -182,7 +190,7 @@ def calculate_page_ranges(
 def split_pdf(
     input_path: Path,
     output_dir: Path,
-    verbose: bool = False,
+    verbose: int = 0,
     dry_run: bool = False,
     match: str | None = None,
 ) -> int:
@@ -190,6 +198,7 @@ def split_pdf(
     Split a PDF at top-level bookmarks into separate files.
 
     Args:
+        verbose: Verbosity level (0=quiet, 1=progress, 2=include bookmark tree).
         match: If provided, only extract bookmarks containing this string (case-insensitive).
 
     Returns the number of files created (or would be created in dry-run mode).
@@ -205,7 +214,7 @@ def split_pdf(
         sys.exit(1)
 
     total_pages = len(reader.pages)
-    if verbose:
+    if verbose >= 1:
         print(f"Opened {input_path.name} ({total_pages} pages)")
 
     # Parse full bookmark tree
@@ -218,7 +227,7 @@ def split_pdf(
     # Get top-level bookmarks for splitting
     top_level = get_top_level_bookmarks(bookmark_tree)
 
-    if verbose:
+    if verbose >= 1:
         print(f"Found {len(top_level)} top-level bookmark(s)")
 
     # Calculate page ranges
@@ -231,7 +240,7 @@ def split_pdf(
         if not filtered_ranges:
             print(f"Error: No bookmarks matching '{match}'", file=sys.stderr)
             sys.exit(1)
-        if verbose:
+        if verbose >= 1:
             print(f"Filtered to {len(filtered_ranges)} bookmark(s) matching '{match}'")
         ranges = filtered_ranges
 
@@ -257,10 +266,16 @@ def split_pdf(
             print(f"Would create: {output_path.name}")
             print(f"  Pages {start_page + 1}-{end_page + 1} ({page_count} page(s))")
             print(f"  Bookmark: {title}")
+            if verbose >= 2 and title in bookmark_by_title:
+                print("  Bookmarks:")
+                print_bookmark_tree(bookmark_by_title[title])
         else:
-            if verbose:
+            if verbose >= 1:
                 print(f"Creating: {output_path.name}")
                 print(f"  Pages {start_page + 1}-{end_page + 1} ({page_count} page(s))")
+                if verbose >= 2 and title in bookmark_by_title:
+                    print("  Bookmarks:")
+                    print_bookmark_tree(bookmark_by_title[title])
 
             # Create new PDF with the page range
             writer = PdfWriter()
@@ -311,8 +326,9 @@ def main() -> None:
     parser.add_argument(
         "-v",
         "--verbose",
-        action="store_true",
-        help="Show detailed progress",
+        action="count",
+        default=0,
+        help="Increase verbosity (-v for progress, -vv for bookmark tree)",
     )
     parser.add_argument(
         "--dry-run",
