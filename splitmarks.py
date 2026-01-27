@@ -204,7 +204,7 @@ def split_pdf(
     verbose: int = 0,
     dry_run: bool = False,
     match: str | None = None,
-    add_case_number: bool = False,
+    no_clobber: bool = False,
 ) -> int:
     """
     Split a PDF at top-level bookmarks into separate files.
@@ -212,8 +212,9 @@ def split_pdf(
     Args:
         verbose: Verbosity level (0=quiet, 1=progress, 2=include bookmark tree).
         match: If provided, only extract bookmarks containing this string (case-insensitive).
-        add_case_number: If True, prepend 8-digit case number from input filename to
-            output files that don't already contain one.
+        no_clobber: If True, prepend 8-digit case number to output files that don't
+            already contain one. Uses number from input filename, or starts at 00000000
+            and increments until finding an unused filename.
 
     Returns the number of files created (or would be created in dry-run mode).
     """
@@ -262,17 +263,16 @@ def split_pdf(
     if not dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract case number from input filename if needed
-    input_case_number = None
-    if add_case_number:
-        input_case_number = extract_case_number(input_path.name)
-        if not input_case_number:
-            print(
-                f"Warning: No 8-digit case number found in '{input_path.name}'",
-                file=sys.stderr,
-            )
-        elif verbose >= 1:
-            print(f"Using case number {input_case_number} from input filename")
+    # Extract case number from input filename if using no-clobber
+    base_case_number = None
+    if no_clobber:
+        base_case_number = extract_case_number(input_path.name)
+        if base_case_number:
+            if verbose >= 1:
+                print(f"Using case number {base_case_number} from input filename")
+        else:
+            if verbose >= 1:
+                print("No case number in input filename, will auto-generate if needed")
 
     # Track used filenames to handle duplicates
     used_names: set[str] = set()
@@ -285,10 +285,24 @@ def split_pdf(
         # Generate safe filename
         safe_name = sanitize_filename(title)
 
-        # Prepend case number if requested and not already present
-        if input_case_number and not contains_case_number(safe_name):
-            safe_name = f"{input_case_number} {safe_name}"
-        output_path = get_unique_filename(output_dir, safe_name, used_names)
+        # Handle no-clobber: prepend case number if needed, check for existing files
+        if no_clobber and not contains_case_number(safe_name):
+            if base_case_number:
+                # Use case number from input filename
+                candidate_name = f"{base_case_number} {safe_name}"
+                output_path = get_unique_filename(output_dir, candidate_name, used_names)
+            else:
+                # No case number in input, find an unused number
+                case_num = 0
+                while True:
+                    candidate_name = f"{case_num:08d} {safe_name}"
+                    output_path = output_dir / f"{candidate_name}.pdf"
+                    if not output_path.exists() and candidate_name.lower() not in used_names:
+                        used_names.add(candidate_name.lower())
+                        break
+                    case_num += 1
+        else:
+            output_path = get_unique_filename(output_dir, safe_name, used_names)
 
         page_count = end_page - start_page + 1
 
@@ -372,9 +386,9 @@ def main() -> None:
         help="Only extract bookmarks containing this string (case-insensitive)",
     )
     parser.add_argument(
-        "--add-case-number",
+        "--no-clobber",
         action="store_true",
-        help="Prepend 8-digit case number from input filename to outputs lacking one",
+        help="Avoid filename collisions by prepending case number from input filename, or auto-incrementing from 00000000",
     )
 
     args = parser.parse_args()
@@ -395,7 +409,7 @@ def main() -> None:
         verbose=args.verbose,
         dry_run=args.dry_run,
         match=args.match,
-        add_case_number=args.add_case_number,
+        no_clobber=args.no_clobber,
     )
 
     # Summary
