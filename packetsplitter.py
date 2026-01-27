@@ -184,9 +184,13 @@ def split_pdf(
     output_dir: Path,
     verbose: bool = False,
     dry_run: bool = False,
+    match: str | None = None,
 ) -> int:
     """
     Split a PDF at top-level bookmarks into separate files.
+
+    Args:
+        match: If provided, only extract bookmarks containing this string (case-insensitive).
 
     Returns the number of files created (or would be created in dry-run mode).
     """
@@ -219,6 +223,17 @@ def split_pdf(
 
     # Calculate page ranges
     ranges = calculate_page_ranges(top_level, total_pages)
+
+    # Filter by match string if provided
+    if match:
+        match_lower = match.lower()
+        filtered_ranges = [(t, s, e) for t, s, e in ranges if match_lower in t.lower()]
+        if not filtered_ranges:
+            print(f"Error: No bookmarks matching '{match}'", file=sys.stderr)
+            sys.exit(1)
+        if verbose:
+            print(f"Filtered to {len(filtered_ranges)} bookmark(s) matching '{match}'")
+        ranges = filtered_ranges
 
     # Create output directory if needed (unless dry-run)
     if not dry_run:
@@ -304,6 +319,12 @@ def main() -> None:
         action="store_true",
         help="Preview splits without creating files",
     )
+    parser.add_argument(
+        "-m",
+        "--match",
+        type=str,
+        help="Only extract bookmarks containing this string (case-insensitive)",
+    )
 
     args = parser.parse_args()
 
@@ -322,6 +343,7 @@ def main() -> None:
         output_dir=args.output_dir,
         verbose=args.verbose,
         dry_run=args.dry_run,
+        match=args.match,
     )
 
     # Summary
