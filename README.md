@@ -11,7 +11,7 @@ pip install -e .
 ## Usage
 
 ```
-packetsplitter input.pdf [-o OUTPUT_DIR] [-v] [--dry-run]
+packetsplitter input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v] [--dry-run]
 ```
 
 ### Arguments
@@ -20,6 +20,7 @@ packetsplitter input.pdf [-o OUTPUT_DIR] [-v] [--dry-run]
 |----------|-------------|
 | `input_pdf` | PDF file to split |
 | `-o, --output-dir DIR` | Output directory (default: current directory) |
+| `-m, --match TEXT` | Only extract bookmarks containing TEXT (case-insensitive) |
 | `-v, --verbose` | Show detailed progress |
 | `--dry-run` | Preview splits without creating files |
 
@@ -43,12 +44,25 @@ Split into a specific directory with verbose output:
 packetsplitter document.pdf -o ./split_files -v
 ```
 
+Extract only bookmarks containing "Memo":
+
+```bash
+packetsplitter document.pdf --match Memo
+```
+
+Extract all briefs (case-insensitive matching):
+
+```bash
+packetsplitter document.pdf -m brief -o ./briefs
+```
+
 ## How It Works
 
 1. Opens the PDF and reads its bookmark outline
-2. Extracts only top-level bookmarks (nested bookmarks are ignored)
+2. Splits at top-level bookmarks (each becomes a separate file)
 3. Calculates page ranges for each section (from one bookmark to the next)
 4. Creates a separate PDF file for each section, named after the bookmark title
+5. Preserves nested bookmarks within each split file
 
 ## Filename Handling
 
