@@ -7,10 +7,20 @@ import argparse
 import re
 import sys
 import unicodedata
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfReadError
+
+
+@dataclass
+class Bookmark:
+    """Represents a bookmark with its children."""
+
+    title: str
+    page_num: int
+    children: list["Bookmark"] = field(default_factory=list)
 
 
 def sanitize_filename(title: str, max_length: int = 200) -> str:
@@ -64,34 +74,83 @@ def get_unique_filename(output_dir: Path, base_name: str, used_names: set) -> Pa
     return output_dir / f"{candidate}.pdf"
 
 
-def extract_top_level_bookmarks(reader: PdfReader) -> list[tuple[str, int]]:
+def parse_outline_tree(reader: PdfReader, outline: list | None = None) -> list[Bookmark]:
     """
-    Extract top-level bookmarks with their page numbers.
+    Recursively parse the PDF outline into a tree of Bookmark objects.
 
-    Returns list of (title, page_number) tuples, sorted by page number.
-    Skips nested bookmark lists.
+    Returns list of top-level Bookmark objects, each with nested children.
     """
+    if outline is None:
+        outline = reader.outline
+
+    if not outline:
+        return []
+
     bookmarks = []
+    i = 0
 
-    if not reader.outline:
-        return bookmarks
+    while i < len(outline):
+        item = outline[i]
 
-    for item in reader.outline:
-        # Skip nested bookmark lists
         if isinstance(item, list):
+            # This is a nested list of children for the previous bookmark
+            if bookmarks:
+                bookmarks[-1].children = parse_outline_tree(reader, item)
+            i += 1
             continue
 
         try:
             title = item.title
             page_num = reader.get_destination_page_number(item)
-            bookmarks.append((title, page_num))
+            bookmarks.append(Bookmark(title=title, page_num=page_num))
         except (AttributeError, KeyError, TypeError):
             # Skip malformed bookmarks
-            continue
+            pass
 
-    # Sort by page number to ensure correct ordering
-    bookmarks.sort(key=lambda x: x[1])
+        i += 1
+
     return bookmarks
+
+
+def get_top_level_bookmarks(bookmarks: list[Bookmark]) -> list[tuple[str, int]]:
+    """
+    Extract just the top-level bookmark info for splitting.
+
+    Returns list of (title, page_number) tuples, sorted by page number.
+    """
+    result = [(b.title, b.page_num) for b in bookmarks]
+    result.sort(key=lambda x: x[1])
+    return result
+
+
+def add_bookmarks_to_writer(
+    writer: PdfWriter,
+    bookmark: Bookmark,
+    start_page: int,
+    end_page: int,
+    parent=None,
+) -> None:
+    """
+    Recursively add a bookmark and its children to the writer.
+
+    Only includes bookmarks whose pages fall within the given range.
+    Page numbers are adjusted relative to start_page.
+    """
+    # Check if this bookmark's page is within range
+    if start_page <= bookmark.page_num <= end_page:
+        # Adjust page number to be relative to the split file
+        adjusted_page = bookmark.page_num - start_page
+
+        # Add the bookmark
+        outline_item = writer.add_outline_item(
+            title=bookmark.title,
+            page_number=adjusted_page,
+            parent=parent,
+        )
+
+        # Recursively add children
+        for child in bookmark.children:
+            add_bookmarks_to_writer(writer, child, start_page, end_page, outline_item)
 
 
 def calculate_page_ranges(
@@ -145,18 +204,21 @@ def split_pdf(
     if verbose:
         print(f"Opened {input_path.name} ({total_pages} pages)")
 
-    # Extract bookmarks
-    bookmarks = extract_top_level_bookmarks(reader)
+    # Parse full bookmark tree
+    bookmark_tree = parse_outline_tree(reader)
 
-    if not bookmarks:
+    if not bookmark_tree:
         print("Error: No top-level bookmarks found in PDF", file=sys.stderr)
         sys.exit(1)
 
+    # Get top-level bookmarks for splitting
+    top_level = get_top_level_bookmarks(bookmark_tree)
+
     if verbose:
-        print(f"Found {len(bookmarks)} top-level bookmark(s)")
+        print(f"Found {len(top_level)} top-level bookmark(s)")
 
     # Calculate page ranges
-    ranges = calculate_page_ranges(bookmarks, total_pages)
+    ranges = calculate_page_ranges(top_level, total_pages)
 
     # Create output directory if needed (unless dry-run)
     if not dry_run:
@@ -165,6 +227,9 @@ def split_pdf(
     # Track used filenames to handle duplicates
     used_names: set[str] = set()
     files_created = 0
+
+    # Create a mapping from top-level title to its Bookmark object
+    bookmark_by_title = {b.title: b for b in bookmark_tree}
 
     for title, start_page, end_page in ranges:
         # Generate safe filename
@@ -186,6 +251,11 @@ def split_pdf(
             writer = PdfWriter()
             for page_num in range(start_page, end_page + 1):
                 writer.add_page(reader.pages[page_num])
+
+            # Add bookmarks for this section
+            if title in bookmark_by_title:
+                top_bookmark = bookmark_by_title[title]
+                add_bookmarks_to_writer(writer, top_bookmark, start_page, end_page)
 
             try:
                 with open(output_path, "wb") as f:
