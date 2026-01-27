@@ -11,7 +11,7 @@ pip install -e .
 ## Usage
 
 ```
-splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v] [--dry-run]
+splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run]
 ```
 
 ### Arguments
@@ -21,7 +21,8 @@ splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v] [--dry-run]
 | `input_pdf` | PDF file to split |
 | `-o, --output-dir DIR` | Output directory (default: current directory) |
 | `-m, --match TEXT` | Only extract bookmarks containing TEXT (case-insensitive) |
-| `-v, --verbose` | Show detailed progress |
+| `-v` | Show progress (page counts, bookmark counts) |
+| `-vv` | Also show nested bookmark tree for each output file |
 | `--dry-run` | Preview splits without creating files |
 
 ### Examples
@@ -54,6 +55,12 @@ Extract all briefs (case-insensitive matching):
 
 ```bash
 splitmarks document.pdf -m brief -o ./briefs
+```
+
+Preview with full bookmark tree:
+
+```bash
+splitmarks document.pdf --dry-run -vv
 ```
 
 ## How It Works
