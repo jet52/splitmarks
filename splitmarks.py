@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-packetsplitter - Split PDF files at top-level bookmarks into separate files.
+splitmarks - Split PDF files at top-level bookmarks into separate files.
 """
 
 import argparse
@@ -293,7 +293,7 @@ def split_pdf(
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        prog="packetsplitter",
+        prog="splitmarks",
         description="Split a PDF file at top-level bookmarks into separate files.",
     )
     parser.add_argument(

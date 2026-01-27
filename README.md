@@ -1,4 +1,4 @@
-# packetsplitter
+# splitmarks
 
 Split a PDF file at top-level bookmarks into separate PDF files, named after each bookmark.
 
@@ -11,7 +11,7 @@ pip install -e .
 ## Usage
 
 ```
-packetsplitter input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v] [--dry-run]
+splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v] [--dry-run]
 ```
 
 ### Arguments
@@ -29,31 +29,31 @@ packetsplitter input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v] [--dry-run]
 Preview what files would be created:
 
 ```bash
-packetsplitter document.pdf --dry-run
+splitmarks document.pdf --dry-run
 ```
 
 Split a PDF into the current directory:
 
 ```bash
-packetsplitter document.pdf
+splitmarks document.pdf
 ```
 
 Split into a specific directory with verbose output:
 
 ```bash
-packetsplitter document.pdf -o ./split_files -v
+splitmarks document.pdf -o ./split_files -v
 ```
 
 Extract only bookmarks containing "Memo":
 
 ```bash
-packetsplitter document.pdf --match Memo
+splitmarks document.pdf --match Memo
 ```
 
 Extract all briefs (case-insensitive matching):
 
 ```bash
-packetsplitter document.pdf -m brief -o ./briefs
+splitmarks document.pdf -m brief -o ./briefs
 ```
 
 ## How It Works
