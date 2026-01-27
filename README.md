@@ -4,7 +4,30 @@ Split a PDF file at top-level bookmarks into separate PDF files, named after eac
 
 ## Installation
 
+### Download (recommended)
+
+Download the standalone executable for your platform from the [latest release](https://github.com/jet52/splitmarks/releases/latest):
+
+- **Windows**: `splitmarks.exe`
+- **macOS**: `splitmarks`
+- **Linux**: `splitmarks`
+
+On macOS/Linux, make it executable after downloading:
 ```bash
+chmod +x splitmarks
+```
+
+### Install from source
+
+Requires Python 3.10+:
+```bash
+pip install git+https://github.com/jet52/splitmarks.git
+```
+
+Or clone and install in development mode:
+```bash
+git clone https://github.com/jet52/splitmarks.git
+cd splitmarks
 pip install -e .
 ```
 
@@ -82,5 +105,6 @@ Bookmark titles are sanitized for use as filenames:
 
 ## Requirements
 
-- Python 3.10+
-- pypdf >= 4.0.0
+**Standalone executables**: No dependencies required.
+
+**Install from source**: Python 3.10+ and pypdf >= 4.0.0
