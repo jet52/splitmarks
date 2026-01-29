@@ -34,7 +34,7 @@ pip install -e .
 ## Usage
 
 ```
-splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--no-clobber]
+splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--no-clobber] [--version]
 ```
 
 ### Arguments
@@ -48,6 +48,7 @@ splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--no-clobb
 | `-vv` | Also show nested bookmark tree for each output file |
 | `--dry-run` | Preview splits without creating files |
 | `--no-clobber` | Avoid collisions: prepend case number from filename, or auto-increment from 00000000 |
+| `--version` | Show version number and exit |
 
 ### Examples
 
@@ -102,6 +103,7 @@ done
 3. Calculates page ranges for each section (from one bookmark to the next)
 4. Creates a separate PDF file for each section, named after the bookmark title
 5. Preserves nested bookmarks within each split file
+6. Removes unreferenced resources (images, fonts) so each file contains only what its pages need
 
 ## Filename Handling
 
@@ -116,4 +118,4 @@ Bookmark titles are sanitized for use as filenames:
 
 **Standalone executables**: No dependencies required.
 
-**Install from source**: Python 3.10+ and pypdf >= 4.0.0
+**Install from source**: Python 3.10+ and pikepdf >= 8.0.0
