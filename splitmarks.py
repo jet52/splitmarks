@@ -10,8 +10,9 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pypdf import PdfReader, PdfWriter
-from pypdf.errors import PdfReadError
+import pikepdf
+
+__version__ = "1.1.0"
 
 
 @dataclass
@@ -85,42 +86,62 @@ def get_unique_filename(output_dir: Path, base_name: str, used_names: set) -> Pa
     return output_dir / f"{candidate}.pdf"
 
 
-def parse_outline_tree(reader: PdfReader, outline: list | None = None) -> list[Bookmark]:
+def _resolve_page_number(pdf: pikepdf.Pdf, outline_node) -> int | None:
     """
-    Recursively parse the PDF outline into a tree of Bookmark objects.
+    Resolve a bookmark's page number from either /Dest or /A (GoTo action).
+
+    Returns 0-based page index, or None if unresolvable.
+    """
+    # Try direct destination first
+    dest = None
+    if hasattr(outline_node, "destination") and outline_node.destination:
+        dest = outline_node.destination
+    elif hasattr(outline_node, "obj") and outline_node.obj:
+        obj = outline_node.obj
+        if "/Dest" in obj and obj["/Dest"] is not None:
+            dest = obj["/Dest"]
+        elif "/A" in obj:
+            action = obj["/A"]
+            if action.get("/S") == pikepdf.Name("/GoTo") and "/D" in action:
+                dest = action["/D"]
+
+    if dest is None:
+        return None
+
+    try:
+        page_ref = dest[0]
+        return pdf.pages.index(page_ref)
+    except (IndexError, ValueError, TypeError):
+        return None
+
+
+def _parse_outline_items(pdf: pikepdf.Pdf, items) -> list[Bookmark]:
+    """Recursively parse outline items into Bookmark objects."""
+    bookmarks = []
+    for item in items:
+        page_num = _resolve_page_number(pdf, item)
+        if page_num is None:
+            continue
+        children = []
+        if item.children:
+            children = _parse_outline_items(pdf, item.children)
+        bookmarks.append(
+            Bookmark(title=str(item.title), page_num=page_num, children=children)
+        )
+    return bookmarks
+
+
+def parse_outline_tree(pdf: pikepdf.Pdf) -> list[Bookmark]:
+    """
+    Parse the PDF outline into a tree of Bookmark objects.
 
     Returns list of top-level Bookmark objects, each with nested children.
     """
-    if outline is None:
-        outline = reader.outline
-
-    if not outline:
+    try:
+        with pdf.open_outline() as outline:
+            return _parse_outline_items(pdf, outline.root)
+    except Exception:
         return []
-
-    bookmarks = []
-    i = 0
-
-    while i < len(outline):
-        item = outline[i]
-
-        if isinstance(item, list):
-            # This is a nested list of children for the previous bookmark
-            if bookmarks:
-                bookmarks[-1].children = parse_outline_tree(reader, item)
-            i += 1
-            continue
-
-        try:
-            title = item.title
-            page_num = reader.get_destination_page_number(item)
-            bookmarks.append(Bookmark(title=title, page_num=page_num))
-        except (AttributeError, KeyError, TypeError):
-            # Skip malformed bookmarks
-            pass
-
-        i += 1
-
-    return bookmarks
 
 
 def get_top_level_bookmarks(bookmarks: list[Bookmark]) -> list[tuple[str, int]]:
@@ -143,33 +164,54 @@ def print_bookmark_tree(bookmark: Bookmark, indent: int = 0) -> None:
 
 
 def add_bookmarks_to_writer(
-    writer: PdfWriter,
+    pdf: pikepdf.Pdf,
     bookmark: Bookmark,
     start_page: int,
     end_page: int,
     parent=None,
 ) -> None:
     """
-    Recursively add a bookmark and its children to the writer.
+    Recursively add a bookmark and its children to the output PDF.
 
     Only includes bookmarks whose pages fall within the given range.
     Page numbers are adjusted relative to start_page.
     """
-    # Check if this bookmark's page is within range
     if start_page <= bookmark.page_num <= end_page:
-        # Adjust page number to be relative to the split file
         adjusted_page = bookmark.page_num - start_page
 
-        # Add the bookmark
-        outline_item = writer.add_outline_item(
-            title=bookmark.title,
-            page_number=adjusted_page,
-            parent=parent,
-        )
+        with pdf.open_outline() as outline:
+            target = parent if parent is not None else outline.root
+            item = pikepdf.OutlineItem(
+                bookmark.title, adjusted_page
+            )
+            target.append(item)
 
-        # Recursively add children
-        for child in bookmark.children:
-            add_bookmarks_to_writer(writer, child, start_page, end_page, outline_item)
+            for child in bookmark.children:
+                if start_page <= child.page_num <= end_page:
+                    child_adjusted = child.page_num - start_page
+                    child_item = pikepdf.OutlineItem(
+                        child.title, child_adjusted
+                    )
+                    item.children.append(child_item)
+                    # Recurse for deeper nesting
+                    _add_children_recursive(
+                        child.children, child_item, start_page, end_page
+                    )
+
+
+def _add_children_recursive(
+    children: list[Bookmark],
+    parent_item: pikepdf.OutlineItem,
+    start_page: int,
+    end_page: int,
+) -> None:
+    """Recursively add child bookmarks."""
+    for child in children:
+        if start_page <= child.page_num <= end_page:
+            adjusted = child.page_num - start_page
+            item = pikepdf.OutlineItem(child.title, adjusted)
+            parent_item.children.append(item)
+            _add_children_recursive(child.children, item, start_page, end_page)
 
 
 def calculate_page_ranges(
@@ -220,20 +262,20 @@ def split_pdf(
     """
     # Read the input PDF
     try:
-        reader = PdfReader(input_path)
-    except PdfReadError as e:
+        pdf = pikepdf.Pdf.open(input_path)
+    except pikepdf.PdfError as e:
         print(f"Error: Cannot read PDF file: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Error: Failed to open PDF: {e}", file=sys.stderr)
         sys.exit(1)
 
-    total_pages = len(reader.pages)
+    total_pages = len(pdf.pages)
     if verbose >= 1:
         print(f"Opened {input_path.name} ({total_pages} pages)")
 
     # Parse full bookmark tree
-    bookmark_tree = parse_outline_tree(reader)
+    bookmark_tree = parse_outline_tree(pdf)
 
     if not bookmark_tree:
         print("Error: No top-level bookmarks found in PDF", file=sys.stderr)
@@ -322,18 +364,25 @@ def split_pdf(
                     print_bookmark_tree(bookmark_by_title[title])
 
             # Create new PDF with the page range
-            writer = PdfWriter()
+            out_pdf = pikepdf.Pdf.new()
             for page_num in range(start_page, end_page + 1):
-                writer.add_page(reader.pages[page_num])
+                out_pdf.pages.append(pdf.pages[page_num])
+
+            # Remove resources not referenced by the included pages
+            out_pdf.remove_unreferenced_resources()
 
             # Add bookmarks for this section
             if title in bookmark_by_title:
                 top_bookmark = bookmark_by_title[title]
-                add_bookmarks_to_writer(writer, top_bookmark, start_page, end_page)
+                add_bookmarks_to_writer(
+                    out_pdf, top_bookmark, start_page, end_page
+                )
 
             try:
-                with open(output_path, "wb") as f:
-                    writer.write(f)
+                out_pdf.save(
+                    output_path,
+                    object_stream_mode=pikepdf.ObjectStreamMode.generate,
+                )
             except PermissionError:
                 print(
                     f"Error: Permission denied writing to {output_path}",
@@ -354,6 +403,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="splitmarks",
         description="Split a PDF file at top-level bookmarks into separate files.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "input_pdf",
