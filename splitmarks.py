@@ -371,12 +371,13 @@ def split_pdf(
             # Remove resources not referenced by the included pages
             out_pdf.remove_unreferenced_resources()
 
-            # Add bookmarks for this section
+            # Add bookmarks for this section, promoting children to top level
             if title in bookmark_by_title:
                 top_bookmark = bookmark_by_title[title]
-                add_bookmarks_to_writer(
-                    out_pdf, top_bookmark, start_page, end_page
-                )
+                for child in top_bookmark.children:
+                    add_bookmarks_to_writer(
+                        out_pdf, child, start_page, end_page
+                    )
 
             try:
                 out_pdf.save(
