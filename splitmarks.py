@@ -240,6 +240,34 @@ def calculate_page_ranges(
     return ranges
 
 
+def calculate_child_page_ranges(
+    parent: Bookmark, parent_end_page: int
+) -> list[tuple[str, int, int, Bookmark]]:
+    """
+    Calculate page ranges for each child bookmark within a parent's span.
+
+    Returns list of (child_title, start_page, end_page, child_bookmark) tuples.
+    end_page is inclusive.
+    """
+    if not parent.children:
+        return []
+
+    children_sorted = sorted(parent.children, key=lambda b: b.page_num)
+    ranges = []
+
+    for i, child in enumerate(children_sorted):
+        start_page = child.page_num
+        if i + 1 < len(children_sorted):
+            end_page = children_sorted[i + 1].page_num - 1
+        else:
+            end_page = parent_end_page
+
+        if end_page >= start_page:
+            ranges.append((child.title, start_page, end_page, child))
+
+    return ranges
+
+
 def split_pdf(
     input_path: Path,
     output_dir: Path,
@@ -291,15 +319,38 @@ def split_pdf(
     ranges = calculate_page_ranges(top_level, total_pages)
 
     # Filter by match string if provided
+    # ranges_ext carries (title, start_page, end_page, child_bookmark_or_none)
+    ranges_ext: list[tuple[str, int, int, Bookmark | None]] = [
+        (t, s, e, None) for t, s, e in ranges
+    ]
     if match:
         match_lower = match.lower()
-        filtered_ranges = [(t, s, e) for t, s, e in ranges if match_lower in t.lower()]
-        if not filtered_ranges:
-            print(f"Error: No bookmarks matching '{match}'", file=sys.stderr)
-            sys.exit(1)
-        if verbose >= 1:
-            print(f"Filtered to {len(filtered_ranges)} bookmark(s) matching '{match}'")
-        ranges = filtered_ranges
+        # Try top-level first
+        filtered = [r for r in ranges_ext if match_lower in r[0].lower()]
+        if filtered:
+            if verbose >= 1:
+                print(f"Filtered to {len(filtered)} top-level bookmark(s) matching '{match}'")
+            ranges_ext = filtered
+        else:
+            # Fall back to second-level (child) bookmarks
+            child_matches: list[tuple[str, int, int, Bookmark | None]] = []
+            bookmark_by_title_tmp = {b.title: b for b in bookmark_tree}
+            for title, start_page, end_page in ranges:
+                parent_bm = bookmark_by_title_tmp.get(title)
+                if not parent_bm or not parent_bm.children:
+                    continue
+                child_ranges = calculate_child_page_ranges(parent_bm, end_page)
+                for child_title, cs, ce, child_bm in child_ranges:
+                    if match_lower in child_title.lower():
+                        if verbose >= 1:
+                            print(f"Matched child bookmark '{child_title}' under '{title}'")
+                        child_matches.append((child_title, cs, ce, child_bm))
+            if not child_matches:
+                print(f"Error: No bookmarks matching '{match}'", file=sys.stderr)
+                sys.exit(1)
+            if verbose >= 1:
+                print(f"Filtered to {len(child_matches)} child bookmark(s) matching '{match}'")
+            ranges_ext = child_matches
 
     # Create output directory if needed (unless dry-run)
     if not dry_run:
@@ -323,7 +374,7 @@ def split_pdf(
     # Create a mapping from top-level title to its Bookmark object
     bookmark_by_title = {b.title: b for b in bookmark_tree}
 
-    for title, start_page, end_page in ranges:
+    for title, start_page, end_page, child_bookmark in ranges_ext:
         # Generate safe filename
         safe_name = sanitize_filename(title)
 
@@ -352,16 +403,26 @@ def split_pdf(
             print(f"Would create: {output_path.name}")
             print(f"  Pages {start_page + 1}-{end_page + 1} ({page_count} page(s))")
             print(f"  Bookmark: {title}")
-            if verbose >= 2 and title in bookmark_by_title:
-                print("  Bookmarks:")
-                print_bookmark_tree(bookmark_by_title[title])
+            if verbose >= 2:
+                if child_bookmark and child_bookmark.children:
+                    print("  Bookmarks:")
+                    for sub in child_bookmark.children:
+                        print_bookmark_tree(sub, indent=1)
+                elif title in bookmark_by_title:
+                    print("  Bookmarks:")
+                    print_bookmark_tree(bookmark_by_title[title])
         else:
             if verbose >= 1:
                 print(f"Creating: {output_path.name}")
                 print(f"  Pages {start_page + 1}-{end_page + 1} ({page_count} page(s))")
-                if verbose >= 2 and title in bookmark_by_title:
-                    print("  Bookmarks:")
-                    print_bookmark_tree(bookmark_by_title[title])
+                if verbose >= 2:
+                    if child_bookmark and child_bookmark.children:
+                        print("  Bookmarks:")
+                        for sub in child_bookmark.children:
+                            print_bookmark_tree(sub, indent=1)
+                    elif title in bookmark_by_title:
+                        print("  Bookmarks:")
+                        print_bookmark_tree(bookmark_by_title[title])
 
             # Create new PDF with the page range
             out_pdf = pikepdf.Pdf.new()
@@ -371,8 +432,15 @@ def split_pdf(
             # Remove resources not referenced by the included pages
             out_pdf.remove_unreferenced_resources()
 
-            # Add bookmarks for this section, promoting children to top level
-            if title in bookmark_by_title:
+            # Add bookmarks to output
+            if child_bookmark:
+                # Child match: add the child's sub-children as top-level bookmarks
+                for sub in child_bookmark.children:
+                    add_bookmarks_to_writer(
+                        out_pdf, sub, start_page, end_page
+                    )
+            elif title in bookmark_by_title:
+                # Top-level match: promote children to top level as before
                 top_bookmark = bookmark_by_title[title]
                 for child in top_bookmark.children:
                     add_bookmarks_to_writer(
