@@ -22,6 +22,11 @@ splitmarks <input.pdf> [options]
 pip install pyinstaller pikepdf
 pyinstaller --onefile --name splitmarks splitmarks.py
 
+# Install local build to ~/bin (must strip xattrs and re-sign)
+cp dist/splitmarks ~/bin/splitmarks
+xattr -cr ~/bin/splitmarks
+codesign --force --sign - ~/bin/splitmarks
+
 # Manual testing with test documents (in test-docs/)
 python splitmarks.py test-docs/example_memo_packet.pdf --dry-run -vv
 python splitmarks.py test-docs/example_memo_packet.pdf -o /tmp/test-output -v
