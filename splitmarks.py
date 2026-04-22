@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pikepdf
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 
 @dataclass
@@ -88,7 +88,9 @@ def get_unique_filename(output_dir: Path, base_name: str, used_names: set) -> Pa
     return output_dir / f"{candidate}.pdf"
 
 
-def _resolve_page_number(pdf: pikepdf.Pdf, outline_node) -> int | None:
+def _resolve_page_number(
+    pdf: pikepdf.Pdf, outline_node, page_index: dict
+) -> int | None:
     """
     Resolve a bookmark's page number from either /Dest or /A (GoTo action).
 
@@ -112,21 +114,27 @@ def _resolve_page_number(pdf: pikepdf.Pdf, outline_node) -> int | None:
 
     try:
         page_ref = dest[0]
+        objgen = getattr(page_ref, "objgen", None)
+        if objgen is not None and objgen in page_index:
+            return page_index[objgen]
+        # Fallback for direct page objects or unusual destinations
         return pdf.pages.index(page_ref)
-    except (IndexError, ValueError, TypeError):
+    except (AttributeError, IndexError, ValueError, TypeError):
         return None
 
 
-def _parse_outline_items(pdf: pikepdf.Pdf, items) -> list[Bookmark]:
+def _parse_outline_items(
+    pdf: pikepdf.Pdf, items, page_index: dict
+) -> list[Bookmark]:
     """Recursively parse outline items into Bookmark objects."""
     bookmarks = []
     for item in items:
-        page_num = _resolve_page_number(pdf, item)
+        page_num = _resolve_page_number(pdf, item, page_index)
         if page_num is None:
             continue
         children = []
         if item.children:
-            children = _parse_outline_items(pdf, item.children)
+            children = _parse_outline_items(pdf, item.children, page_index)
         bookmarks.append(
             Bookmark(title=str(item.title), page_num=page_num, children=children)
         )
@@ -140,8 +148,11 @@ def parse_outline_tree(pdf: pikepdf.Pdf) -> list[Bookmark]:
     Returns list of top-level Bookmark objects, each with nested children.
     """
     try:
+        # Build once: map indirect page-object (objnum, gen) → 0-based page index.
+        # Avoids O(N*P) scans of pdf.pages.index() for each bookmark.
+        page_index = {page.obj.objgen: i for i, page in enumerate(pdf.pages)}
         with pdf.open_outline() as outline:
-            return _parse_outline_items(pdf, outline.root)
+            return _parse_outline_items(pdf, outline.root, page_index)
     except Exception:
         return []
 
@@ -562,7 +573,7 @@ def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         prog="splitmarks",
-        description="Split a PDF file at top-level bookmarks into separate files.",
+        description=f"Split a PDF file at top-level bookmarks into separate files. Version {__version__}.",
     )
     parser.add_argument(
         "--version",

@@ -18,14 +18,16 @@ python splitmarks.py <input.pdf> [options]
 # Run as installed command
 splitmarks <input.pdf> [options]
 
-# Build standalone executable
+# Build standalone executable (local: --onedir for fast startup; CI uses --onefile)
 pip install pyinstaller pikepdf
-pyinstaller --onefile --name splitmarks splitmarks.py
+pyinstaller --onedir --name splitmarks splitmarks.py
 
-# Install local build to ~/bin (must strip xattrs and re-sign)
-cp dist/splitmarks ~/bin/splitmarks
-xattr -cr ~/bin/splitmarks
-codesign --force --sign - ~/bin/splitmarks
+# Install local build: stash the bundle in ~/.local/share and symlink into ~/bin
+rm -rf ~/.local/share/splitmarks
+cp -R dist/splitmarks ~/.local/share/splitmarks
+xattr -cr ~/.local/share/splitmarks
+codesign --force --sign - ~/.local/share/splitmarks/splitmarks
+ln -sf ~/.local/share/splitmarks/splitmarks ~/bin/splitmarks
 
 # Manual testing with test documents (in test-docs/)
 python splitmarks.py test-docs/example_memo_packet.pdf --dry-run -vv
