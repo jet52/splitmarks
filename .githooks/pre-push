@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Forwards to scripts/check-sensitive.sh.  Enable with:
+#   git config --local core.hooksPath .githooks
+exec "$(git rev-parse --show-toplevel)/scripts/check-sensitive.sh" "$@"

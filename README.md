@@ -119,3 +119,14 @@ Bookmark titles are sanitized for use as filenames:
 **Standalone executables**: No dependencies required.
 
 **Install from source**: Python 3.10+ and pikepdf >= 8.0.0
+
+## Contributing
+
+On a fresh clone, activate the local pre-push sensitive-content check:
+
+```bash
+git config --local core.hooksPath .githooks
+```
+
+It scans commits being pushed for likely ND court dockets, confidential-case
+captions, and committed binaries. Bypass once with `git push --no-verify`.

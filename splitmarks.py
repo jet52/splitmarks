@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pikepdf
 
-__version__ = "1.5.1"
+__version__ = "1.5.2"
 
 
 @dataclass
