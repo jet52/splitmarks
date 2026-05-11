@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "splitmarks"
-version = "1.5.2"
+version = "2.0.1"
 description = "Split PDF files at top-level bookmarks into separate files"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
-    "pikepdf>=8.0.0",
+    "pypdf>=4.0.0",
 ]
 
 [project.scripts]

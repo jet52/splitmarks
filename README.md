@@ -118,7 +118,7 @@ Bookmark titles are sanitized for use as filenames:
 
 **Standalone executables**: No dependencies required.
 
-**Install from source**: Python 3.10+ and pikepdf >= 8.0.0
+**Install from source**: Python 3.10+ and pypdf >= 4.0.0
 
 ## Contributing
 

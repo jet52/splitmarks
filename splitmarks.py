@@ -5,16 +5,18 @@ splitmarks - Split PDF files at top-level bookmarks into separate files.
 
 import argparse
 import re
-import shutil
-import subprocess
 import sys
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import pikepdf
+try:
+    import pypdf
+except ImportError:
+    print("Error: pypdf is required. Install with: pip install pypdf", file=sys.stderr)
+    sys.exit(1)
 
-__version__ = "1.5.2"
+__version__ = "2.0.1"
 
 
 @dataclass
@@ -88,71 +90,41 @@ def get_unique_filename(output_dir: Path, base_name: str, used_names: set) -> Pa
     return output_dir / f"{candidate}.pdf"
 
 
-def _resolve_page_number(
-    pdf: pikepdf.Pdf, outline_node, page_index: dict
-) -> int | None:
-    """
-    Resolve a bookmark's page number from either /Dest or /A (GoTo action).
-
-    Returns 0-based page index, or None if unresolvable.
-    """
-    # Try direct destination first
-    dest = None
-    if hasattr(outline_node, "destination") and outline_node.destination:
-        dest = outline_node.destination
-    elif hasattr(outline_node, "obj") and outline_node.obj:
-        obj = outline_node.obj
-        if "/Dest" in obj and obj["/Dest"] is not None:
-            dest = obj["/Dest"]
-        elif "/A" in obj:
-            action = obj["/A"]
-            if action.get("/S") == pikepdf.Name("/GoTo") and "/D" in action:
-                dest = action["/D"]
-
-    if dest is None:
-        return None
-
-    try:
-        page_ref = dest[0]
-        objgen = getattr(page_ref, "objgen", None)
-        if objgen is not None and objgen in page_index:
-            return page_index[objgen]
-        # Fallback for direct page objects or unusual destinations
-        return pdf.pages.index(page_ref)
-    except (AttributeError, IndexError, ValueError, TypeError):
-        return None
-
-
-def _parse_outline_items(
-    pdf: pikepdf.Pdf, items, page_index: dict
-) -> list[Bookmark]:
+def _parse_outline_items(reader: pypdf.PdfReader, items) -> list[Bookmark]:
     """Recursively parse outline items into Bookmark objects."""
     bookmarks = []
+    pending_parent: Bookmark | None = None
+
     for item in items:
-        page_num = _resolve_page_number(pdf, item, page_index)
-        if page_num is None:
-            continue
-        children = []
-        if item.children:
-            children = _parse_outline_items(pdf, item.children, page_index)
-        bookmarks.append(
-            Bookmark(title=str(item.title), page_num=page_num, children=children)
-        )
+        if isinstance(item, list):
+            # Sub-list represents children of the previous bookmark
+            if pending_parent is not None:
+                pending_parent.children = _parse_outline_items(reader, item)
+        else:
+            # Destination object
+            try:
+                page_num = reader.get_destination_page_number(item)
+            except Exception:
+                continue
+            pending_parent = Bookmark(
+                title=str(item.title), page_num=page_num, children=[]
+            )
+            bookmarks.append(pending_parent)
+
     return bookmarks
 
 
-def parse_outline_tree(pdf: pikepdf.Pdf) -> list[Bookmark]:
+def parse_outline_tree(reader: pypdf.PdfReader) -> list[Bookmark]:
     """
     Parse the PDF outline into a tree of Bookmark objects.
 
     Returns list of top-level Bookmark objects, each with nested children.
     """
     try:
-        # Build once: map indirect page-object (objnum, gen) → 0-based page index.
-        # Avoids O(N*P) scans of pdf.pages.index() for each bookmark.
-        page_index = {page.obj.objgen: i for i, page in enumerate(pdf.pages)}
-        with pdf.open_outline() as outline:
-            return _parse_outline_items(pdf, outline.root, page_index)
+        outline = reader.outline
+        if not outline:
+            return []
+        return _parse_outline_items(reader, outline)
     except Exception:
         return []
 
@@ -176,12 +148,29 @@ def print_bookmark_tree(bookmark: Bookmark, indent: int = 0) -> None:
         print_bookmark_tree(child, indent + 1)
 
 
+def _add_outline_recursive(
+    writer: pypdf.PdfWriter,
+    children: list[Bookmark],
+    parent_ref,
+    start_page: int,
+    end_page: int,
+) -> None:
+    """Recursively add child bookmarks to the writer."""
+    for child in children:
+        if start_page <= child.page_num <= end_page:
+            adjusted = child.page_num - start_page
+            ref = writer.add_outline_item(child.title, adjusted, parent=parent_ref)
+            _add_outline_recursive(
+                writer, child.children, ref, start_page, end_page
+            )
+
+
 def add_bookmarks_to_writer(
-    pdf: pikepdf.Pdf,
+    writer: pypdf.PdfWriter,
     bookmark: Bookmark,
     start_page: int,
     end_page: int,
-    parent=None,
+    parent_ref=None,
 ) -> None:
     """
     Recursively add a bookmark and its children to the output PDF.
@@ -191,40 +180,12 @@ def add_bookmarks_to_writer(
     """
     if start_page <= bookmark.page_num <= end_page:
         adjusted_page = bookmark.page_num - start_page
-
-        with pdf.open_outline() as outline:
-            target = parent if parent is not None else outline.root
-            item = pikepdf.OutlineItem(
-                bookmark.title, adjusted_page
-            )
-            target.append(item)
-
-            for child in bookmark.children:
-                if start_page <= child.page_num <= end_page:
-                    child_adjusted = child.page_num - start_page
-                    child_item = pikepdf.OutlineItem(
-                        child.title, child_adjusted
-                    )
-                    item.children.append(child_item)
-                    # Recurse for deeper nesting
-                    _add_children_recursive(
-                        child.children, child_item, start_page, end_page
-                    )
-
-
-def _add_children_recursive(
-    children: list[Bookmark],
-    parent_item: pikepdf.OutlineItem,
-    start_page: int,
-    end_page: int,
-) -> None:
-    """Recursively add child bookmarks."""
-    for child in children:
-        if start_page <= child.page_num <= end_page:
-            adjusted = child.page_num - start_page
-            item = pikepdf.OutlineItem(child.title, adjusted)
-            parent_item.children.append(item)
-            _add_children_recursive(child.children, item, start_page, end_page)
+        ref = writer.add_outline_item(
+            bookmark.title, adjusted_page, parent=parent_ref
+        )
+        _add_outline_recursive(
+            writer, bookmark.children, ref, start_page, end_page
+        )
 
 
 def calculate_page_ranges(
@@ -303,20 +264,20 @@ def split_pdf(
     """
     # Read the input PDF
     try:
-        pdf = pikepdf.Pdf.open(input_path)
-    except pikepdf.PdfError as e:
+        reader = pypdf.PdfReader(input_path)
+    except pypdf.errors.PdfReadError as e:
         print(f"Error: Cannot read PDF file: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Error: Failed to open PDF: {e}", file=sys.stderr)
         sys.exit(1)
 
-    total_pages = len(pdf.pages)
+    total_pages = len(reader.pages)
     if verbose >= 1:
         print(f"Opened {input_path.name} ({total_pages} pages)")
 
     # Parse full bookmark tree
-    bookmark_tree = parse_outline_tree(pdf)
+    bookmark_tree = parse_outline_tree(reader)
 
     if not bookmark_tree:
         print("Error: No top-level bookmarks found in PDF", file=sys.stderr)
@@ -437,34 +398,43 @@ def split_pdf(
                         print("  Bookmarks:")
                         print_bookmark_tree(bookmark_by_title[title])
 
-            # Create new PDF with the page range
-            out_pdf = pikepdf.Pdf.new()
-            for page_num in range(start_page, end_page + 1):
-                out_pdf.pages.append(pdf.pages[page_num])
-
-            # Remove resources not referenced by the included pages
-            out_pdf.remove_unreferenced_resources()
+            # Create new PDF with the page range.
+            # Use .append() rather than .add_page(): pypdf rebuilds /Resources
+            # from only what the included pages reference. add_page() inherits
+            # the source page's full /Resources, so every split would carry the
+            # entire source PDF's resource pool (3x+ output bloat on large
+            # packets). import_outline=False because bookmarks are added
+            # manually below via add_bookmarks_to_writer.
+            writer = pypdf.PdfWriter()
+            writer.append(
+                reader,
+                pages=(start_page, end_page + 1),
+                import_outline=False,
+            )
 
             # Add bookmarks to output
             if child_bookmark:
                 # Child match: add the child's sub-children as top-level bookmarks
                 for sub in child_bookmark.children:
                     add_bookmarks_to_writer(
-                        out_pdf, sub, start_page, end_page
+                        writer, sub, start_page, end_page
                     )
             elif title in bookmark_by_title:
                 # Top-level match: promote children to top level as before
                 top_bookmark = bookmark_by_title[title]
                 for child in top_bookmark.children:
                     add_bookmarks_to_writer(
-                        out_pdf, child, start_page, end_page
+                        writer, child, start_page, end_page
                     )
 
+            # Remove unreferenced objects (images/fonts from other sections)
+            writer.compress_identical_objects(
+                remove_identicals=True, remove_orphans=True
+            )
+
             try:
-                out_pdf.save(
-                    output_path,
-                    object_stream_mode=pikepdf.ObjectStreamMode.generate,
-                )
+                with open(output_path, "wb") as f:
+                    writer.write(f)
             except PermissionError:
                 print(
                     f"Error: Permission denied writing to {output_path}",
@@ -480,100 +450,11 @@ def split_pdf(
     return files_created
 
 
-def check_text_layer(
-    pdf_path: Path,
-    min_chars_per_page: int = 50,
-) -> dict:
-    """Check whether a PDF has extractable text or appears image-scanned.
-
-    Uses ``pdftotext`` (poppler) for extraction — the same tool subagents
-    use — so the check reflects what they will actually get.  Falls back to
-    pikepdf page count if pdftotext is unavailable.
-
-    Returns a dict::
-
-        {
-            "path": str,
-            "total_pages": int,
-            "total_chars": int,
-            "avg_chars": float,
-            "has_text": bool,
-        }
-    """
-    # Get page count via pikepdf (fast, no full parse)
-    pdf = pikepdf.Pdf.open(pdf_path)
-    total_pages = len(pdf.pages)
-    pdf.close()
-
-    pdftotext_bin = shutil.which("pdftotext")
-    if not pdftotext_bin:
-        return {
-            "path": str(pdf_path),
-            "total_pages": total_pages,
-            "total_chars": -1,
-            "avg_chars": -1,
-            "has_text": True,  # can't check — assume OK
-        }
-
-    # Run pdftotext to stdout
-    try:
-        result = subprocess.run(
-            [pdftotext_bin, str(pdf_path), "-"],
-            capture_output=True,
-            timeout=30,
-        )
-        text = result.stdout.decode("utf-8", errors="replace").strip()
-    except (subprocess.TimeoutExpired, OSError):
-        text = ""
-
-    total_chars = len(text)
-    avg_chars = total_chars / total_pages if total_pages else 0
-
-    return {
-        "path": str(pdf_path),
-        "total_pages": total_pages,
-        "total_chars": total_chars,
-        "avg_chars": round(avg_chars, 1),
-        "has_text": avg_chars >= min_chars_per_page,
-    }
-
-
-def check_text_layers(
-    directory: Path,
-    min_chars_per_page: int = 50,
-    verbose: bool = False,
-) -> list[dict]:
-    """Check all PDFs in a directory for extractable text layers.
-
-    Returns a list of result dicts (see :func:`check_text_layer`).
-    Prints warnings to stderr for files that appear image-scanned.
-    """
-    results = []
-    for pdf_path in sorted(directory.glob("*.pdf")):
-        result = check_text_layer(pdf_path, min_chars_per_page)
-        results.append(result)
-        if not result["has_text"]:
-            name = pdf_path.name
-            avg = result["avg_chars"]
-            pages = result["total_pages"]
-            print(
-                f"WARNING: {name} ({pages} pages) appears image-scanned "
-                f"(avg {avg} chars/page). Text extraction will be unreliable. "
-                f"Consider running: ocrmypdf '{name}' '{name}'",
-                file=sys.stderr,
-            )
-        elif verbose:
-            name = pdf_path.name
-            avg = result["avg_chars"]
-            print(f"  {name}: text OK (avg {avg} chars/page)", file=sys.stderr)
-    return results
-
-
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         prog="splitmarks",
-        description=f"Split a PDF file at top-level bookmarks into separate files. Version {__version__}.",
+        description="Split a PDF file at top-level bookmarks into separate files.",
     )
     parser.add_argument(
         "--version",
@@ -615,11 +496,6 @@ def main() -> None:
         action="store_true",
         help="Avoid filename collisions by prepending case number from input filename, or auto-incrementing from 00000000",
     )
-    parser.add_argument(
-        "--check-text",
-        action="store_true",
-        help="After splitting, check each output PDF for extractable text and warn about image-scanned files",
-    )
 
     args = parser.parse_args()
 
@@ -645,19 +521,6 @@ def main() -> None:
     # Summary
     action = "Would create" if args.dry_run else "Created"
     print(f"\n{action} {count} file(s)")
-
-    # Text layer check on output files
-    if args.check_text and not args.dry_run and count > 0:
-        print()
-        results = check_text_layers(
-            args.output_dir, verbose=args.verbose >= 1
-        )
-        scanned = [r for r in results if not r["has_text"]]
-        if scanned:
-            print(
-                f"\n{len(scanned)} of {len(results)} file(s) appear image-scanned.",
-                file=sys.stderr,
-            )
 
 
 if __name__ == "__main__":
