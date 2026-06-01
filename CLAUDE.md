@@ -19,7 +19,7 @@ python splitmarks.py <input.pdf> [options]
 splitmarks <input.pdf> [options]
 
 # Build standalone executable (local: --onedir for fast startup; CI uses --onefile)
-pip install pyinstaller pikepdf
+pip install pyinstaller pypdf
 pyinstaller --onedir --name splitmarks splitmarks.py
 
 # Install local build: stash the bundle in ~/.local/share and symlink into ~/bin
@@ -44,7 +44,7 @@ Single-file tool: everything lives in `splitmarks.py` (no package structure).
 
 **Key components in `splitmarks.py`:**
 - `Bookmark` dataclass — tree structure preserving PDF outline hierarchy
-- `parse_outline_tree()` / `_parse_outline_items()` — recursive pikepdf outline parsing, handles both `/Dest` and `/A` (GoTo action) destinations
+- `parse_outline_tree()` / `_parse_outline_items()` — recursive pypdf outline parsing, handles both `/Dest` and `/A` (GoTo action) destinations
 - `calculate_page_ranges()` — maps each top-level bookmark to its page span
 - `split_pdf()` — main logic: open PDF, parse, filter, split, write output files
 - `add_bookmarks_to_writer()` — promotes child bookmarks to top level in split output files
@@ -55,7 +55,7 @@ Single-file tool: everything lives in `splitmarks.py` (no package structure).
 ## Key Details
 
 - **Python >= 3.10** required (uses `str | None` union syntax)
-- **pikepdf** is the sole external dependency (migrated from pypdf for smaller output files via `remove_unreferenced_resources()` and `ObjectStreamMode.generate`)
+- **pypdf** (`>=3.17.0`) is the sole external dependency. Output files are slimmed via `writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)`, which only exists in pypdf 4.0+, so the call is guarded with `hasattr` and skipped on 3.x (splitting still works, just without that compression)
 - Version is tracked in **two places**: `__version__` in `splitmarks.py` and `version` in `pyproject.toml` — keep them in sync
 - Entry point registered in pyproject.toml: `splitmarks = "splitmarks:main"`
 

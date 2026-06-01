@@ -16,7 +16,7 @@ except ImportError:
     print("Error: pypdf is required. Install with: pip install pypdf", file=sys.stderr)
     sys.exit(1)
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 
 
 @dataclass
@@ -427,10 +427,13 @@ def split_pdf(
                         writer, child, start_page, end_page
                     )
 
-            # Remove unreferenced objects (images/fonts from other sections)
-            writer.compress_identical_objects(
-                remove_identicals=True, remove_orphans=True
-            )
+            # Remove unreferenced objects (images/fonts from other sections).
+            # compress_identical_objects was added in pypdf 4.0; skip it on
+            # older versions rather than crashing.
+            if hasattr(writer, "compress_identical_objects"):
+                writer.compress_identical_objects(
+                    remove_identicals=True, remove_orphans=True
+                )
 
             try:
                 with open(output_path, "wb") as f:
