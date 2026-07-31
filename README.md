@@ -34,7 +34,7 @@ pip install -e .
 ## Usage
 
 ```
-splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--no-clobber] [--version]
+splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--no-clobber] [--check-text] [--version]
 ```
 
 ### Arguments
@@ -48,6 +48,7 @@ splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--no-clobb
 | `-vv` | Also show nested bookmark tree for each output file |
 | `--dry-run` | Preview splits without creating files |
 | `--no-clobber` | Avoid collisions: prepend case number from filename, or auto-increment from 00000000 |
+| `--check-text` | After splitting, warn about output PDFs that appear image-scanned (needs `pdftotext`) |
 | `--version` | Show version number and exit |
 
 ### Examples
@@ -88,6 +89,12 @@ Preview with full bookmark tree:
 splitmarks document.pdf --dry-run -vv
 ```
 
+Split and flag any output that appears image-scanned (so you know what to OCR):
+
+```bash
+splitmarks packet.pdf -o ./split_output --check-text
+```
+
 Batch extract memos from multiple PDFs, avoiding filename collisions:
 
 ```bash
@@ -119,6 +126,9 @@ Bookmark titles are sanitized for use as filenames:
 **Standalone executables**: No dependencies required.
 
 **Install from source**: Python 3.10+ and pypdf >= 4.0.0
+
+**`--check-text` only**: `pdftotext` (poppler) on `PATH`. If it is absent the check
+degrades to "can't check, assume OK" rather than failing the run.
 
 ## Contributing
 

@@ -5,6 +5,8 @@ splitmarks - Split PDF files at top-level bookmarks into separate files.
 
 import argparse
 import re
+import shutil
+import subprocess
 import sys
 import unicodedata
 from dataclasses import dataclass, field
@@ -16,7 +18,7 @@ except ImportError:
     print("Error: pypdf is required. Install with: pip install pypdf", file=sys.stderr)
     sys.exit(1)
 
-__version__ = "2.0.2"
+__version__ = "2.1.0"
 
 
 @dataclass
@@ -453,6 +455,98 @@ def split_pdf(
     return files_created
 
 
+def check_text_layer(
+    pdf_path: Path,
+    min_chars_per_page: int = 50,
+) -> dict:
+    """Check whether a PDF has extractable text or appears image-scanned.
+
+    Uses ``pdftotext`` (poppler) for extraction — the same tool subagents
+    use — so the check reflects what they will actually get.  Degrades to
+    "can't check, assume OK" if pdftotext is unavailable or the page count
+    can't be read.
+
+    Returns a dict::
+
+        {
+            "path": str,
+            "total_pages": int,
+            "total_chars": int,
+            "avg_chars": float,
+            "has_text": bool,
+        }
+    """
+    # Page count via pypdf. A file we just wrote should always open, but a
+    # failure here means "unknown", not "image-scanned" — never warn on it.
+    try:
+        total_pages = len(pypdf.PdfReader(pdf_path).pages)
+    except Exception:
+        total_pages = 0
+
+    pdftotext_bin = shutil.which("pdftotext")
+    if not pdftotext_bin or not total_pages:
+        return {
+            "path": str(pdf_path),
+            "total_pages": total_pages,
+            "total_chars": -1,
+            "avg_chars": -1,
+            "has_text": True,  # can't check — assume OK
+        }
+
+    # Run pdftotext to stdout
+    try:
+        result = subprocess.run(
+            [pdftotext_bin, str(pdf_path), "-"],
+            capture_output=True,
+            timeout=30,
+        )
+        text = result.stdout.decode("utf-8", errors="replace").strip()
+    except (subprocess.TimeoutExpired, OSError):
+        text = ""
+
+    total_chars = len(text)
+    avg_chars = total_chars / total_pages if total_pages else 0
+
+    return {
+        "path": str(pdf_path),
+        "total_pages": total_pages,
+        "total_chars": total_chars,
+        "avg_chars": round(avg_chars, 1),
+        "has_text": avg_chars >= min_chars_per_page,
+    }
+
+
+def check_text_layers(
+    directory: Path,
+    min_chars_per_page: int = 50,
+    verbose: bool = False,
+) -> list[dict]:
+    """Check all PDFs in a directory for extractable text layers.
+
+    Returns a list of result dicts (see :func:`check_text_layer`).
+    Prints warnings to stderr for files that appear image-scanned.
+    """
+    results = []
+    for pdf_path in sorted(directory.glob("*.pdf")):
+        result = check_text_layer(pdf_path, min_chars_per_page)
+        results.append(result)
+        if not result["has_text"]:
+            name = pdf_path.name
+            avg = result["avg_chars"]
+            pages = result["total_pages"]
+            print(
+                f"WARNING: {name} ({pages} pages) appears image-scanned "
+                f"(avg {avg} chars/page). Text extraction will be unreliable. "
+                f"Consider running: ocrmypdf '{name}' '{name}'",
+                file=sys.stderr,
+            )
+        elif verbose:
+            name = pdf_path.name
+            avg = result["avg_chars"]
+            print(f"  {name}: text OK (avg {avg} chars/page)", file=sys.stderr)
+    return results
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -499,6 +593,11 @@ def main() -> None:
         action="store_true",
         help="Avoid filename collisions by prepending case number from input filename, or auto-incrementing from 00000000",
     )
+    parser.add_argument(
+        "--check-text",
+        action="store_true",
+        help="After splitting, check each output PDF for extractable text and warn about image-scanned files",
+    )
 
     args = parser.parse_args()
 
@@ -524,6 +623,19 @@ def main() -> None:
     # Summary
     action = "Would create" if args.dry_run else "Created"
     print(f"\n{action} {count} file(s)")
+
+    # Text layer check on output files
+    if args.check_text and not args.dry_run and count > 0:
+        print()
+        results = check_text_layers(
+            args.output_dir, verbose=args.verbose >= 1
+        )
+        scanned = [r for r in results if not r["has_text"]]
+        if scanned:
+            print(
+                f"\n{len(scanned)} of {len(results)} file(s) appear image-scanned.",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":
