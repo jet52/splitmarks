@@ -18,7 +18,16 @@ except ImportError:
     print("Error: pypdf is required. Install with: pip install pypdf", file=sys.stderr)
     sys.exit(1)
 
-__version__ = "2.1.0"
+# Optional. jetredline ships textquality.py beside this script; when present,
+# --check-text can distinguish a text layer that is missing from one that is
+# present but corrupt, which take different ocrmypdf flags. Standalone
+# installs simply keep the older density-only behaviour.
+try:
+    import textquality as _TEXTQUALITY
+except ImportError:
+    _TEXTQUALITY = None
+
+__version__ = "2.2.0"
 
 
 @dataclass
@@ -466,6 +475,14 @@ def check_text_layer(
     "can't check, assume OK" if pdftotext is unavailable or the page count
     can't be read.
 
+    Density alone cannot see a text layer that is present but *garbage* —
+    the Acrobat "Paper Capture" and Google Books cases, where a scan yields
+    plenty of characters of confident nonsense.  That distinction matters
+    because ``ocrmypdf --skip-text`` is a silent no-op on such a file.  When
+    the optional ``textquality`` module is importable (jetredline ships it
+    alongside this script), it is consulted for that second judgment and the
+    remedy is reported accordingly.  Without it, behaviour is unchanged.
+
     Returns a dict::
 
         {
@@ -474,6 +491,8 @@ def check_text_layer(
             "total_chars": int,
             "avg_chars": float,
             "has_text": bool,
+            "quality_state": str | None,   # textquality state, if available
+            "ocr_args": list[str] | None,  # flags for ocrmypdf, if needed
         }
     """
     # Page count via pypdf. A file we just wrote should always open, but a
@@ -491,6 +510,8 @@ def check_text_layer(
             "total_chars": -1,
             "avg_chars": -1,
             "has_text": True,  # can't check — assume OK
+            "quality_state": None,
+            "ocr_args": None,
         }
 
     # Run pdftotext to stdout
@@ -506,14 +527,41 @@ def check_text_layer(
 
     total_chars = len(text)
     avg_chars = total_chars / total_pages if total_pages else 0
+    dense_enough = avg_chars >= min_chars_per_page
+
+    quality_state = None
+    ocr_args = None
+    if dense_enough:
+        scored = _score_quality(text, total_pages, min_chars_per_page)
+        if scored:
+            quality_state = scored["state"]
+            ocr_args = scored["ocr_args"]
+    elif _TEXTQUALITY:
+        ocr_args = ["--skip-text"]
+        quality_state = "no-text-layer"
 
     return {
         "path": str(pdf_path),
         "total_pages": total_pages,
         "total_chars": total_chars,
         "avg_chars": round(avg_chars, 1),
-        "has_text": avg_chars >= min_chars_per_page,
+        # A dense but corrupt layer is NOT usable text, so it fails this
+        # check the same way an image-only file does.
+        "has_text": dense_enough and quality_state != "text-layer-corrupt",
+        "quality_state": quality_state,
+        "ocr_args": ocr_args,
     }
+
+
+def _score_quality(text: str, pages: int, min_chars: int):
+    """Consult the optional ``textquality`` module; return None if absent."""
+    if not _TEXTQUALITY:
+        return None
+    try:
+        return _TEXTQUALITY.score_text(text, page_count=pages,
+                                       min_chars_per_page=min_chars)
+    except Exception:
+        return None
 
 
 def check_text_layers(
@@ -534,12 +582,25 @@ def check_text_layers(
             name = pdf_path.name
             avg = result["avg_chars"]
             pages = result["total_pages"]
-            print(
-                f"WARNING: {name} ({pages} pages) appears image-scanned "
-                f"(avg {avg} chars/page). Text extraction will be unreliable. "
-                f"Consider running: ocrmypdf '{name}' '{name}'",
-                file=sys.stderr,
-            )
+            out = f"{Path(name).stem}.ocr.pdf"
+            if result.get("quality_state") == "text-layer-corrupt":
+                # The dangerous case: plenty of text, none of it trustworthy.
+                # --skip-text would skip every page and report success.
+                print(
+                    f"WARNING: {name} ({pages} pages) has a text layer that "
+                    f"is present but CORRUPT (avg {avg} chars/page of "
+                    f"unreliable OCR). --skip-text would be a no-op here. "
+                    f"Run: ocrmypdf --force-ocr '{name}' '{out}'",
+                    file=sys.stderr,
+                )
+            else:
+                flags = " ".join(result.get("ocr_args") or ["--skip-text"])
+                print(
+                    f"WARNING: {name} ({pages} pages) appears image-scanned "
+                    f"(avg {avg} chars/page). Text extraction will be "
+                    f"unreliable. Run: ocrmypdf {flags} '{name}' '{out}'",
+                    file=sys.stderr,
+                )
         elif verbose:
             name = pdf_path.name
             avg = result["avg_chars"]
