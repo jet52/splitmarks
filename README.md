@@ -48,7 +48,7 @@ splitmarks input.pdf [-o OUTPUT_DIR] [-m MATCH] [-v|-vv] [--dry-run] [--no-clobb
 | `-vv` | Also show nested bookmark tree for each output file |
 | `--dry-run` | Preview splits without creating files |
 | `--no-clobber` | Avoid collisions: prepend case number from filename, or auto-increment from 00000000 |
-| `--check-text` | After splitting, warn about output PDFs that appear image-scanned (needs `pdftotext`) |
+| `--check-text` | After splitting, warn about output PDFs whose text layer is missing or corrupt (needs `pdftotext`) |
 | `--version` | Show version number and exit |
 
 ### Examples
@@ -111,6 +111,48 @@ done
 4. Creates a separate PDF file for each section, named after the bookmark title
 5. Preserves nested bookmarks within each split file
 6. Removes unreferenced resources (images, fonts) so each file contains only what its pages need
+
+## Text-Layer Quality
+
+`textquality.py` scores an extracted text layer and is the module `--check-text`
+consults. It exists because character density alone answers the wrong question.
+Density catches a pure image scan, but it is blind to a layer that is *present
+and garbage* — the Acrobat "Paper Capture" and Google Books case, where a scan
+yields plenty of characters of confident nonsense:
+
+    "the assessmellt thereof shall Le suberdmate to the gelleral plall"
+
+That matters because `ocrmypdf --skip-text` is a silent no-op on such a file: it
+skips every page that already carries text, leaves the corruption in place, and
+reports success. So three states are reported rather than two, each with a
+different remedy:
+
+| State | Meaning | Remedy |
+|-------|---------|--------|
+| `text-ok` | usable prose | use the text layer as-is |
+| `no-text-layer` | image-only | `ocrmypdf --skip-text` |
+| `text-layer-corrupt` | dense but wrong | `ocrmypdf --force-ocr` |
+
+Thresholds are set against a measured corpus, not guessed; see the module
+docstring for the signals and the reference numbers.
+
+Usable as a library or on its own:
+
+```bash
+textquality FILE.pdf [FILE.pdf ...] [--json] [--quiet]
+```
+
+```python
+from textquality import score_pdf, STATE_CORRUPT
+
+r = score_pdf("scan.pdf")
+if r["state"] == STATE_CORRUPT:
+    subprocess.run(["ocrmypdf", *r["ocr_args"], src, dst])
+```
+
+`splitmarks.py` imports it optionally: a standalone copy of the script with no
+`textquality.py` beside it keeps the older density-only behaviour rather than
+failing.
 
 ## Filename Handling
 
