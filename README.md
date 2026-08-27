@@ -2,6 +2,13 @@
 
 Split a PDF file at top-level bookmarks into separate PDF files, named after each bookmark.
 
+## Not an Official Court Product
+
+An independent, open-source project published by an individual in a personal
+capacity, consistent with Rule 3.1 of the North Dakota Code of Judicial Conduct.
+It is a general-purpose PDF utility, not authorized, endorsed, or maintained by
+any court.
+
 ## Installation
 
 ### Download (recommended)
