@@ -31,8 +31,9 @@ scan_range() {
   # 1. ND Supreme Court docket 2000-2026 series
   local sc_hits
   sc_hits=$(echo "$added" \
-    | grep -oE '\b20(0[0-9]|1[0-9]|2[0-6])[0-9]{4}\b' \
-    | grep -vE "\b($PLACEHOLDER_DOCKETS)\b" \
+    | grep -oE '(^|[^0-9])20(0[0-9]|1[0-9]|2[0-6])[0-9]{4}([^0-9]|$)' \
+    | grep -oE '20[0-9]{6}' \
+    | grep -vE "^($PLACEHOLDER_DOCKETS)$" \
     | allow_grep | sort -u || true)
   if [ -n "$sc_hits" ]; then
     echo "[pre-push] possible real Supreme Court docket(s):"
@@ -43,7 +44,8 @@ scan_range() {
   # 2. ND district-court docket NN-YYYY-XX-NNNNN
   local dc_hits
   dc_hits=$(echo "$added" \
-    | grep -oE '\b[0-9]{2}-20(0[0-9]|1[0-9]|2[0-6])-[A-Z]{2}-[0-9]{5}\b' \
+    | grep -oE '(^|[^0-9-])[0-9]{1,2}-20(0[0-9]|1[0-9]|2[0-6])-[A-Z]{2}-[0-9]{1,5}([^0-9]|$)' \
+    | grep -oE '[0-9]{1,2}-20[0-9]{2}-[A-Z]{2}-[0-9]{1,5}' \
     | grep -vE "^$PLACEHOLDER_DC\$" \
     | allow_grep | sort -u || true)
   if [ -n "$dc_hits" ]; then
